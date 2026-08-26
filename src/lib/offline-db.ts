@@ -8,6 +8,8 @@ export interface OfflineTransaksi {
   total: number
   bayar: number
   kembalian: number
+  metodeBayar?: string // TUNAI, QRIS, DEBIT_KREDIT, TRANSFER
+  paymentStatus?: string // PAID, PENDING, FAILED
   status: 'pending_sync' | 'synced' | 'failed'
   createdAt: string
   syncedAt?: string
@@ -75,7 +77,7 @@ export const offlineDBHelpers = {
       status: 'pending_sync',
       createdAt: new Date().toISOString(),
     }
-    
+
     await offlineDB.transaksis.add(newTransaksi)
     await offlineDB.syncQueue.add({
       id: crypto.randomUUID(),

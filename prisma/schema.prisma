@@ -47,14 +47,17 @@ model Produk {
 }
 
 model Transaksi {
-  id         Int      @id @default(autoincrement())
-  clientId   String?  @unique @map("client_id") @db.VarChar(36) // UUID from offline client
-  userId     Int      @map("user_id")
-  total      Decimal  @db.Decimal(12, 2)
-  bayar      Decimal  @db.Decimal(12, 2)
-  kembalian  Decimal  @db.Decimal(12, 2)
-  syncStatus String   @default("synced") @map("sync_status") @db.VarChar(20) // synced, pending, failed
-  createdAt  DateTime @default(now()) @map("created_at")
+  id            Int      @id @default(autoincrement())
+  clientId      String?  @unique @map("client_id") @db.VarChar(36) // UUID from offline client
+  userId        Int      @map("user_id")
+  total         Decimal  @db.Decimal(12, 2)
+  bayar         Decimal  @db.Decimal(12, 2)
+  kembalian     Decimal  @db.Decimal(12, 2)
+  metodeBayar   String   @default("TUNAI") @map("metode_bayar") @db.VarChar(20) // TUNAI, QRIS, DEBIT_KREDIT, TRANSFER
+  paymentStatus String   @default("PAID") @map("payment_status") @db.VarChar(20) // PAID, PENDING, FAILED
+  paymentRef    String?  @map("payment_ref") @db.VarChar(255) // gateway reference (Midtrans order_id)
+  syncStatus    String   @default("synced") @map("sync_status") @db.VarChar(20) // synced, pending, failed
+  createdAt     DateTime @default(now()) @map("created_at")
 
   user             User              @relation(fields: [userId], references: [id])
   detailTransaksis DetailTransaksi[]

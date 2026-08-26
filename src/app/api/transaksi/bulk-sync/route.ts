@@ -64,6 +64,8 @@ export async function POST(req: NextRequest) {
               total,
               bayar: Number(t.bayar),
               kembalian: Number(t.bayar) - total,
+              metodeBayar: t.metodeBayar || "TUNAI",
+              paymentStatus: t.paymentStatus || "PAID",
               syncStatus: "synced",
               createdAt: t.createdAt ? new Date(t.createdAt) : new Date(),
               detailTransaksis: {
