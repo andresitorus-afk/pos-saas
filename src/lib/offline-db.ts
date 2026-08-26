@@ -140,18 +140,25 @@ export const offlineDBHelpers = {
   },
 
   // Clear synced items from queue
+  // Catatan: 'data.id' bukan indexed keypath, jadi filter in-memory lalu bulkDelete
   async clearSyncedQueue() {
     const syncedTransaksis = await offlineDB.transaksis
       .where('status')
       .equals('synced')
       .toArray()
-    
-    const syncedIds = syncedTransaksis.map(t => t.id)
-    
-    await offlineDB.syncQueue
-      .where('data.id')
-      .anyOf(syncedIds)
-      .delete()
+
+    const syncedIds = new Set(syncedTransaksis.map((t) => t.id))
+
+    if (syncedIds.size === 0) return
+
+    const queueItems = await offlineDB.syncQueue.toArray()
+    const toDelete = queueItems
+      .filter((q) => q.data?.id && syncedIds.has(q.data.id))
+      .map((q) => q.id)
+
+    if (toDelete.length > 0) {
+      await offlineDB.syncQueue.bulkDelete(toDelete)
+    }
   },
 
   // Get statistics
