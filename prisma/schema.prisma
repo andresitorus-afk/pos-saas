@@ -76,11 +76,11 @@ model DetailTransaksi {
 }
 
 model Setting {
-  id      Int    @id @default(autoincrement())
+  id       Int    @id @default(autoincrement())
   namaToko String @default("Toko Saya") @map("nama_toko") @db.VarChar(200)
-  alamat  String @default("") @db.Text()
-  noTelp  String @default("") @map("no_telp") @db.VarChar(20)
-  footer  String @default("Terima kasih atas kunjungan Anda!") @db.Text()
+  alamat   String @default("") @map("alamat") @db.VarChar(500)
+  noTelp   String @default("") @map("no_telp") @db.VarChar(20)
+  footer   String @default("") @map("footer") @db.VarChar(500)
 
   @@map("setting")
 }

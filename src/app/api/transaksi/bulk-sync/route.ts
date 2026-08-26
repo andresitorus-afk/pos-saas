@@ -1,103 +1,121 @@
-import { NextRequest, NextResponse } from 'next/server'
-import { prisma } from '@/lib/prisma'
+import { NextRequest, NextResponse } from "next/server";
+import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 
+/**
+ * POST /api/transaksi/bulk-sync
+ * Bulk sync transaksi offline dari IndexedDB client.
+ * Idempotency via clientId (UUID) - mencegah duplikasi saat retry.
+ */
 export async function POST(req: NextRequest) {
   try {
-    const { transaksis } = await req.json()
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const { transaksis } = await req.json();
 
     if (!Array.isArray(transaksis) || transaksis.length === 0) {
       return NextResponse.json(
-        { error: 'Invalid request: transaksis must be a non-empty array' },
+        { error: "transaksis harus berupa array yang tidak kosong" },
         { status: 400 }
-      )
+      );
     }
 
-    const results = []
+    const results = [];
 
-    // Process each transaction in a database transaction
-    for (const transaksi of transaksis) {
+    for (const t of transaksis) {
       try {
-        // Check if already synced (idempotency using UUID)
-        const existing = await prisma.transaksi.findFirst({
-          where: {
-            // Store UUID in a custom field or check by exact match
-            userId: transaksi.userId,
-            total: transaksi.total,
-            createdAt: new Date(transaksi.createdAt),
-          },
-        })
+        // Idempotency check via UUID clientId
+        if (t.id) {
+          const existing = await prisma.transaksi.findUnique({
+            where: { clientId: t.id },
+          });
 
-        if (existing) {
-          results.push({
-            clientId: transaksi.id,
-            status: 'skipped',
-            message: 'Transaction already exists',
-            serverId: existing.id,
-          })
-          continue
+          if (existing) {
+            results.push({
+              clientId: t.id,
+              status: "skipped",
+              serverId: existing.id,
+            });
+            continue;
+          }
         }
 
-        // Create transaction with details atomically
-        const newTransaksi = await prisma.transaksi.create({
-          data: {
-            userId: transaksi.userId,
-            total: transaksi.total,
-            bayar: transaksi.bayar,
-            kembalian: transaksi.kembalian,
-            createdAt: new Date(transaksi.createdAt),
-            detailTransaksis: {
-              create: transaksi.items.map((item: any) => ({
-                produkId: item.produkId,
-                jumlah: item.jumlah,
-                subtotal: item.subtotal,
-              })),
-            },
-          },
-        })
+        // Get products for price validation
+        const produkIds = (t.items ?? []).map((i: { produkId: number }) => i.produkId);
+        const produks = await prisma.produk.findMany({
+          where: { id: { in: produkIds } },
+        });
+        const produkMap = new Map(produks.map((p) => [p.id, p]));
 
-        // Update stock for each item
-        for (const item of transaksi.items) {
-          await prisma.produk.update({
-            where: { id: item.produkId },
+        const total = (t.items ?? []).reduce((sum: number, item: { produkId: number; jumlah: number }) => {
+          const produk = produkMap.get(item.produkId);
+          return sum + Number(produk?.harga ?? 0) * item.jumlah;
+        }, 0);
+
+        // Atomic: create transaksi + details + decrement stock
+        await prisma.$transaction(async (tx) => {
+          await tx.transaksi.create({
             data: {
-              stok: {
-                decrement: item.jumlah,
+              userId: Number(session.user!.id),
+              clientId: t.id || null,
+              total,
+              bayar: Number(t.bayar),
+              kembalian: Number(t.bayar) - total,
+              syncStatus: "synced",
+              createdAt: t.createdAt ? new Date(t.createdAt) : new Date(),
+              detailTransaksis: {
+                create: (t.items ?? []).map(
+                  (item: { produkId: number; jumlah: number }) => {
+                    const produk = produkMap.get(item.produkId)!;
+                    return {
+                      produkId: item.produkId,
+                      jumlah: item.jumlah,
+                      subtotal: Number(produk.harga) * item.jumlah,
+                    };
+                  }
+                ),
               },
             },
-          })
-        }
+          });
+
+          // Update stock untuk tiap item
+          for (const item of t.items ?? []) {
+            await tx.produk.update({
+              where: { id: item.produkId },
+              data: { stok: { decrement: item.jumlah } },
+            });
+          }
+        });
 
         results.push({
-          clientId: transaksi.id,
-          status: 'success',
-          serverId: newTransaksi.id,
-        })
-      } catch (error: any) {
-        console.error('Failed to sync transaction:', error)
+          clientId: t.id,
+          status: "success",
+        });
+      } catch (error) {
+        console.error(`Failed to sync transaction ${t.id}:`, error);
         results.push({
-          clientId: transaksi.id,
-          status: 'failed',
-          error: error.message,
-        })
+          clientId: t.id,
+          status: "failed",
+          error: error instanceof Error ? error.message : "Unknown error",
+        });
       }
     }
-
-    const synced = results.filter((r) => r.status === 'success').length
-    const skipped = results.filter((r) => r.status === 'skipped').length
-    const failed = results.filter((r) => r.status === 'failed').length
 
     return NextResponse.json({
       success: true,
       results,
-      synced,
-      skipped,
-      failed,
-    })
-  } catch (error: any) {
-    console.error('Bulk sync error:', error)
+      synced: results.filter((r) => r.status === "success").length,
+      skipped: results.filter((r) => r.status === "skipped").length,
+      failed: results.filter((r) => r.status === "failed").length,
+    });
+  } catch (error) {
+    console.error("Bulk sync error:", error);
     return NextResponse.json(
-      { success: false, error: error.message },
+      { success: false, error: "Gagal melakukan sync" },
       { status: 500 }
-    )
+    );
   }
 }
